@@ -1,9 +1,9 @@
-org 0x7C00
+org 0
 
 ; == CONSTANTS ===================================================================
 VGA_MODE	equ	0x0013 ; Set VGA_VIDEO_MODE to 320x200, 256 colors
 VIDEO_MEMORY	equ	0xA000 ; Segment video memory address
-END_VIDEO_MEM	equ	0xAFA0 ; Segment end of video memory address (allows us to store more than 0xFFFF - 0xFA00 = 0x5FF snake parts)
+END_VIDEO_MEM	equ	0xAFA0 ; Segment end of video memory address
 SCREEN_WIDTH	equ	320
 SCREEN_HEIGHT	equ	200
 RECT_WIDTH	equ	4
@@ -12,47 +12,57 @@ WIDTH_END	equ	SCREEN_WIDTH / RECT_WIDTH
 HEIGHT_END	equ	SCREEN_HEIGHT / RECT_HEIGHT
 BG_COLOR	equ	0
 SNAKE_COLOR	equ	0x30
-TIME_OFF	equ	0x0000
-DIR_OFF		equ	0x0002 ; Offset into DS for current snake direction (struct { u8 x_dir, u8 y_dir })
-SNAKE_LEN_OFF	equ	0x0004 ; Offset into DS for length of snake position array
-SNAKE_OFF	equ	0x0006 ; Offset into DS for start of snake position array (struct { u8 x, u8 y })
+APPLE_COLOR	equ	0x40
+; Offsets into DS:
+TIME		equ	0x0000 ; Stores time threshold for game ticks
+DIR		equ	0x0002 ; Current snake direction (Direction: struct { u8 x_dir, u8 y_dir })
+SNAKE_LEN	equ	0x0004 ; Length of snake position array
+SNAKE		equ	0x0006 ; Start of snake position array (Position: struct { u8 x, u8 y })
+; Offsets into ES:
 TOGGLE		equ	0xF9FF
 TOGGLE_RECT	equ 	0x314F
 NUM_WAIT_TICKS	equ	2
 
 ; == CODE ========================================================================
-; Set Video mode
-mov ax, VGA_MODE
-int 0x10
+jmp init
+nop
 
-; Setup ES with video memory address
-push VIDEO_MEMORY
-pop es
+init:
+	; Init Stack Segment, Stack Pointer and Data Segment
+	cli
+	xor ax, ax
+	mov ss, ax
+	mov ax, 0x7C00
+	mov sp, ax
+	mov ds, ax
+	sti
 
-; Setup DS to end of video memory
-push END_VIDEO_MEM
-pop ds
+	; Set Video mode
+	mov ax, VGA_MODE
+	int 0x10
 
-; Initial Direction
-xor dx, dx
-mov [ds:DIR_OFF], dx
-; Initial Head Position (top left)
-mov [ds:SNAKE_OFF], dx
-; Initial len of snake array (starts as 0)
-mov [ds:SNAKE_LEN_OFF], dx
-; Point stack segment to 0
-mov ss, dx
+	; Setup ES with video memory address
+	push VIDEO_MEMORY
+	pop es
 
-cld
+	; Setup DS to end of video memory
+	push END_VIDEO_MEM
+	pop ds
 
-; Do initial drawing of snake
-mov al, SNAKE_COLOR
-call draw_rect
-; TODO: init first apple. everytime its eaten generate new one
+	; Initial len of snake array
+	mov dx, 1
+	mov [ds:SNAKE_LEN], dx
+	; Initial Direction
+	xor dx, dx
+	mov [ds:DIR], dx
+	; Initial Head Position (top left)
+	mov [ds:SNAKE], dx
 
-; TODO: apple generation
-; TODO: apple eat + resize
-; TODO: when moving always compute new head and store in some reg (e.g. bx), then loop through all parts - 1, everytime read next part, exchange it with prev and repeat, once we get to last part we read its value, clear it and set it to prev value (unless we ate apple, then keep last element)
+	cld
+
+	; Do initial drawing of snake
+	mov al, SNAKE_COLOR
+	call draw_rect
 
 game_loop:
 	mov bx, NUM_WAIT_TICKS
@@ -62,39 +72,62 @@ game_loop:
 
 	call get_keystroke			; al = keystroke
 	call update_direction			; bx = direction
-	.compute_newpos:
-		mov dx, [ds:SNAKE_OFF]
 
-		; Compute new x pos + wrap around if necessary
-		; Code duplication less space than generic method call i tested
-		add dl, bl
-		jns .not_neg
-		add dl, WIDTH_END
-		.not_neg:
-		cmp dl, WIDTH_END
-		jne .not_eq
-		xor dl, dl
-		.not_eq:
+	; Compute new x pos + wrap around if necessary
+	; Code duplication less space than generic method call i tested
+	mov dx, [ds:SNAKE]
 
-		; Compute new y pos + wrap around if necessary
-		add dh, bh
-		jns .not_neg2
-		add dh, HEIGHT_END
-		.not_neg2:
-		cmp dh, HEIGHT_END
-		jne .not_eq2
-		xor dh, dh
-		.not_eq2:
+	add dl, bl
+	jns .not_neg
+	add dl, WIDTH_END
+	.not_neg:
+	cmp dl, WIDTH_END
+	jne .not_eq
+	xor dl, dl
+	.not_eq:
 
-		push dx
-		call wait_time
-		pop dx
+	; Compute new y pos + wrap around if necessary
+	add dh, bh
+	jns .not_neg2
+	add dh, HEIGHT_END
+	.not_neg2:
+	cmp dh, HEIGHT_END
+	jne .not_eq2
+	xor dh, dh
+	.not_eq2:
 
-		; draw new head
-		mov al, SNAKE_COLOR
-		call draw_rect			; dx = Position, al = Color
-		mov [ds:SNAKE_OFF], dx		; store new pos of head
-		jmp game_loop
+	; dx = new head pos
+	; cx = len
+	; ax = head pos
+	mov cx, [ds:SNAKE_LEN]
+	mov si, SNAKE
+	lodsw
+	.loop:
+		cmp cx, 1
+		je .loop_end
+		mov bx, ax
+		lodsw
+		mov -2[ds:si], bx
+		dec cx
+		jmp .loop
+	.loop_end:
+
+	push dx				; Preserve new head position
+	push ax				; Preserve old tail position
+	call wait_time			; wait before draw so drawing is always done at same speed
+
+	; clear old tail
+	pop dx
+	xor al, al
+	call draw_rect
+
+	; draw new head
+	pop dx
+	mov al, SNAKE_COLOR
+	call draw_rect			; dx = Position, al = Color
+	mov [ds:SNAKE], dx		; store new pos of head
+
+	jmp game_loop
 
 ; Calling convention: Parameters: dx = Position (dl=x, dh=y)
 ;		      		  al = Color
@@ -160,10 +193,10 @@ update_direction:
 	.d:
 		mov bl, 1
 	.update_dir:
-		mov [ds:DIR_OFF], bx
+		mov [ds:DIR], bx
 		ret
 	.read_old_dir:
-		mov bx, [ds:DIR_OFF]
+		mov bx, [ds:DIR]
 		ret
 
 ; Calling convention: Parameters: bx = Ticks to wait
@@ -173,7 +206,7 @@ set_wait_time:
 	xor ah, ah
 	int 0x1A
 	add dx, bx
-	mov [ds:TIME_OFF], dx
+	mov [ds:TIME], dx
 	ret
 
 ; Calling convention: Parameters: -
@@ -182,7 +215,7 @@ set_wait_time:
 wait_time:
 	xor ah, ah
 	int 0x1A
-	mov bp, [ds:TIME_OFF]
+	mov bp, [ds:TIME]
 	.wait:
 		int 0x1A
 		cmp dx, bp
