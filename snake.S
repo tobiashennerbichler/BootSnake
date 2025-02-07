@@ -64,9 +64,27 @@ game_loop:
 	call update_direction			; bx = direction
 	.compute_newpos:
 		mov dx, [ds:SNAKE_OFF]
-		add dh, bh			; split in two instructions to prevent add dx, 0x00FF ('a') to influence upper byte
+
+		; Compute new x pos + wrap around if necessary
+		; Code duplication less space than generic method call i tested
 		add dl, bl
-		; TODO: check if movement out-of-bounds --> wrap around
+		jns .not_neg
+		add dl, WIDTH_END
+		.not_neg:
+		cmp dl, WIDTH_END
+		jne .not_eq
+		xor dl, dl
+		.not_eq:
+
+		; Compute new y pos + wrap around if necessary
+		add dh, bh
+		jns .not_neg2
+		add dh, HEIGHT_END
+		.not_neg2:
+		cmp dh, HEIGHT_END
+		jne .not_eq2
+		xor dh, dh
+		.not_eq2:
 
 		push dx
 		call wait_time
@@ -120,7 +138,7 @@ get_keystroke:
 ;		      Return: bx = direction
 ;		      Destroys: bx
 update_direction:
-	xor bx, bx			; bh = x_dir, bl = y_dir
+	xor bx, bx			; bh = y_dir, bl = x_dir
 	cmp al, 'w'
 	je .w
 	cmp al, 's'
@@ -171,7 +189,7 @@ wait_time:
 		jl .wait
 	ret
 
-; Calling convention: Parameters -
+; Calling convention: Parameters: -
 ;		      Returns: -
 ;		      Destroys: al, dx, di, bx, cx
 draw_toggle:
