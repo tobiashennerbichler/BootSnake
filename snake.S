@@ -6,18 +6,29 @@ VIDEO_MEMORY	equ	0xA000 ; Segment video memory address
 END_VIDEO_MEM	equ	0xAFA0 ; Segment end of video memory address
 SCREEN_WIDTH	equ	320
 SCREEN_HEIGHT	equ	200
+; RECT_WIDTH must be chosen to fit SCREEN_WIDTH/RECT_WIDTH into one byte
 RECT_WIDTH	equ	4
 RECT_HEIGHT	equ	4
 WIDTH_END	equ	SCREEN_WIDTH / RECT_WIDTH
 HEIGHT_END	equ	SCREEN_HEIGHT / RECT_HEIGHT
+
+; Computing x % WIDTH_END/HEIGHT_END for the random apple location is not efficient (div) or costs
+; too much space (see gcc optimizations). Since computing modulo for 2**i is easy (AND with (2**i) - 1), 
+; we take the next highest power of 2 of WIDTH_END or HEIGHT_END, respectively, and subtract WIDTH_END or
+; HEIGHT_END off of the end result. This does not result in exactly x % WIDTH_END/HEIGHT_END, but is still
+; in its bounds in less operations. The bitmasks must be set manually when changing Width/Height.
+WIDTH_BITMASK	equ	0x7F
+HEIGHT_BITMASK	equ	0x3F
+
 BG_COLOR	equ	0
 SNAKE_COLOR	equ	0x30
 APPLE_COLOR	equ	0x40
 ; Offsets into DS:
 TIME		equ	0x0000 ; Stores time threshold for game ticks
-DIR		equ	0x0002 ; Current snake direction (Direction: struct { u8 x_dir, u8 y_dir })
-SNAKE_LEN	equ	0x0004 ; Length of snake position array
-SNAKE		equ	0x0006 ; Start of snake position array (Position: struct { u8 x, u8 y })
+LFSR		equ	0x0002 ; Stores the current lfsr state for random apple generation
+DIR		equ	0x0004 ; Current snake direction (Direction: struct { u8 x_dir, u8 y_dir })
+SNAKE_LEN	equ	0x0006 ; Length of snake position array
+SNAKE		equ	0x0008 ; Start of snake position array (Position: struct { u8 x, u8 y })
 ; Offsets into ES:
 TOGGLE		equ	0xF9FF
 TOGGLE_RECT	equ 	0x314F
@@ -64,37 +75,31 @@ init:
 	mov al, SNAKE_COLOR
 	call draw_rect
 
+	; Init LFSR state to current ticks (since midnight)
+	; Cannot start at 0, otherwise only has a period of 1
+	xor ah, ah
+	int 0x1A
+	test dx, dx
+	jne .init_lfsr
+	inc dx
+	.init_lfsr:
+	mov [ds:LFSR], dx
+	call draw_new_apple
+
 game_loop:
 	mov bx, NUM_WAIT_TICKS
 	call set_wait_time
 
 	call draw_toggle			; Debug
 
-	call get_keystroke			; al = keystroke
-	call update_direction			; bx = direction
+	call get_keystroke			; in: - out: al = keystroke
+	call update_direction			; in: al = keystroke, out: bx = direction
+	call compute_new_head_pos		; in: bx = direction, out: dx = new head pos
 
-	; Compute new x pos + wrap around if necessary
-	; Code duplication less space than generic method call i tested
-	mov dx, [ds:SNAKE]
-
-	add dl, bl
-	jns .not_neg
-	add dl, WIDTH_END
-	.not_neg:
-	cmp dl, WIDTH_END
-	jne .not_eq
-	xor dl, dl
-	.not_eq:
-
-	; Compute new y pos + wrap around if necessary
-	add dh, bh
-	jns .not_neg2
-	add dh, HEIGHT_END
-	.not_neg2:
-	cmp dh, HEIGHT_END
-	jne .not_eq2
-	xor dh, dh
-	.not_eq2:
+	;call get_color_from_pos			; in: dx = new head pos, out: si = Color of pixel
+	; TODO: compute index to ES for position
+	; TODO: check if new head pos is SNAKE_COLOR, if new head pos is not current tail (since tail will be moved) --> gameover
+	; TODO: check if new head pos is APPLE_COLOR, if so do not clear current tail, increment snake len, generate new apple
 
 	; dx = new head pos
 	; cx = len
@@ -103,18 +108,17 @@ game_loop:
 	mov si, SNAKE
 	lodsw
 	.loop:
-		cmp cx, 1
-		je .loop_end
+		dec cx
+		jz .loop_end
 		mov bx, ax
 		lodsw
 		mov -2[ds:si], bx
-		dec cx
-		jmp .loop
 	.loop_end:
-
 	push dx				; Preserve new head position
 	push ax				; Preserve old tail position
 	call wait_time			; wait before draw so drawing is always done at same speed
+
+	call draw_new_apple
 
 	; clear old tail
 	pop dx
@@ -199,6 +203,46 @@ update_direction:
 		mov bx, [ds:DIR]
 		ret
 
+; Calling convention: Parameters: bx = Direction (bl = x_dir, bh = y_dir)
+;		      Return: dx = New Head Position
+;		      Destroys: dx
+compute_new_head_pos:
+	; Compute new x pos + wrap around if necessary
+	; Code duplication less space than generic method call i tested
+	mov dx, [ds:SNAKE]
+
+	add dl, bl
+	jns .not_neg
+	add dl, WIDTH_END
+	.not_neg:
+	cmp dl, WIDTH_END
+	jne .not_eq
+	xor dl, dl
+
+	.not_eq:
+	; Compute new y pos + wrap around if necessary
+	add dh, bh
+	jns .not_neg2
+	add dh, HEIGHT_END
+	.not_neg2:
+	cmp dh, HEIGHT_END
+	jne .not_eq2
+	xor dh, dh
+	.not_eq2:
+	ret
+
+; Calling Convention: Parameters: dx = Position (dl = x, dh = y)
+;		      Return: si = Color at the index in video memory computed from the given position
+;		      Destroys: ax, si
+get_color_from_pos:
+	movzx ax, dl
+	movzx si, dh
+	imul ax, RECT_WIDTH
+	imul si, RECT_HEIGHT*SCREEN_WIDTH
+	add si, ax
+	mov si, [es:si]
+	ret
+
 ; Calling convention: Parameters: bx = Ticks to wait
 ;		      Return: -
 ;		      Destroys: ah, dx, cx
@@ -229,6 +273,49 @@ draw_toggle:
 	mov al, [es:TOGGLE]
 	xor al, 1
 	mov dx, TOGGLE_RECT
+	call draw_rect
+	ret
+
+; Calling convention: Parameters: -
+;		      Returns: -
+;		      Destroys: ax, bx, cx, dx, bp, si
+; TODO: check if apple would spawn on snake, if so change it and retry
+draw_new_apple:
+	; bit = (lfsr ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) << 15
+	; lfsr = (lfsr >> 1) | bit
+	mov dx, [ds:LFSR]
+	.advance:
+		mov ax, dx
+		mov bx, dx
+		mov bp, dx
+		shr bx, 2
+		shr ax, 3
+		xor bx, ax
+		shr bp, 1
+		xor dx, bx
+		shr bx, 3
+		xor dx, bx
+		sal dx, 15
+		or dx, bp
+	mov [ds:LFSR], dx
+
+	; Restrict dh to 0..HEIGHT_END and dl to 0..WIDTH_END
+	and dh, HEIGHT_BITMASK
+	cmp dh, HEIGHT_END
+	jl .height_ok
+	sub dh, HEIGHT_END
+	.height_ok:
+	and dl, WIDTH_BITMASK
+	cmp dl, WIDTH_END
+	jl .width_ok
+	sub dl, WIDTH_END
+	.width_ok:
+
+	call get_color_from_pos
+	cmp si, SNAKE_COLOR
+	je draw_new_apple
+
+	mov al, APPLE_COLOR
 	call draw_rect
 	ret
 
