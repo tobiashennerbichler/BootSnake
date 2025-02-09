@@ -20,15 +20,18 @@ HEIGHT_END	equ	SCREEN_HEIGHT / RECT_HEIGHT
 WIDTH_BITMASK	equ	0x3F;0x7F
 HEIGHT_BITMASK	equ	0x1F;0x3F
 
+; Colors
 BG_COLOR	equ	0
 SNAKE_COLOR	equ	0x2F
 APPLE_COLOR	equ	0x28
+
 ; Offsets into DS:
 TIME		equ	0x0000 ; Stores time threshold for game ticks
 LFSR		equ	0x0002 ; Stores the current lfsr state for random apple generation
 DIR		equ	0x0004 ; Current snake direction (Direction: struct { u8 x_dir, u8 y_dir })
 SNAKE_LEN	equ	0x0006 ; Length of snake position array
 SNAKE		equ	0x0008 ; Start of snake position array (Position: struct { u8 x, u8 y })
+
 ; Offsets into ES:
 TOGGLE		equ	0xF9FF
 TOGGLE_RECT	equ 	0x1827
@@ -96,36 +99,10 @@ game_loop:
 	call update_direction			; in: al = keystroke, out: bx = direction
 	call compute_new_head_pos		; in: bx = direction, out: dx = new head pos
 	call get_color_from_pos			; in: dx = new head pos, out: bl = Color of pixel + in
-	
-	; call check_game_over			; in: dx = new head pos + bl = Color of pixel, out: in
-	; Check if new position has snake color --> otherwise no collision
-	cmp bl, SNAKE_COLOR
-	jne .no_collision
-	; Even if snake color, no collision if new head is old tail
-	; TODO: could make exception for when len=2 (snake turns around and runs into old tail)
-	mov cx, [ds:SNAKE_LEN]
-	mov si, SNAKE
-	shl cx, 1
-	add si, cx
-	mov bp, -2[ds:si]
-	cmp dx, bp
-	je .no_collision
-	jmp game_over
+	call check_game_over
 
-	; call shift_parts_back		; in: -, out: ax = tail position + si = pointer to [ds:SNAKE_LEN*2]
-	.no_collision:
 	push bx				; Preserve color at new head pos
-	mov cx, [ds:SNAKE_LEN]
-	mov si, SNAKE
-	lodsw
-	.loop:
-		dec cx
-		jz .loop_end
-		mov bx, ax
-		lodsw
-		mov -2[ds:si], bx
-		jmp .loop
-	.loop_end:
+	call shift_parts_back
 	pop bx				; Restore color at new head pos
 	push dx				; Preserve new head position
 	push ax				; Preserve old tail position
@@ -156,6 +133,44 @@ game_loop:
 
 game_over:
 	hlt
+
+; Calling convention: Parameters: dx = new head Position, bl = Color of new head Position
+;		      Return: -
+;		      Destroys: cx, si, bp
+check_game_over:
+	cmp bl, SNAKE_COLOR
+	jne .no_collision
+	; Even if snake color, no collision if new head is old tail
+	; TODO: could make exception for when len=2 (snake turns around and runs into old tail)
+	; TODO: or simply disable snake from being able to turn around
+	mov cx, [ds:SNAKE_LEN]
+	mov si, SNAKE
+	shl cx, 1
+	add si, cx
+	mov bp, -2[ds:si]
+	cmp dx, bp
+	jne game_over
+
+	.no_collision:
+	ret
+
+; Calling convention: Parameters: 
+;		      Return: si = pointer to after last snake part ([ds:SNAKE_LEN*2])
+;			      ax = Position of old tail
+;		      Destroys: ax, bx, cx, si
+shift_parts_back:
+	mov cx, [ds:SNAKE_LEN]
+	mov si, SNAKE
+	lodsw
+	.loop:
+		dec cx
+		jz .loop_end
+		mov bx, ax
+		lodsw
+		mov -2[ds:si], bx
+		jmp .loop
+	.loop_end:
+	ret
 
 ; Calling convention: Parameters: dx = Position (dl=x, dh=y)
 ;		      		  al = Color
@@ -303,7 +318,6 @@ draw_toggle:
 ; Calling convention: Parameters: -
 ;		      Returns: -
 ;		      Destroys: ax, bx, cx, dx, bp, si
-; TODO: check if apple would spawn on snake, if so change it and retry
 draw_new_apple:
 	; bit = (lfsr ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) << 15
 	; lfsr = (lfsr >> 1) | bit
