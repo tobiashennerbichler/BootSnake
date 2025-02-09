@@ -4,6 +4,7 @@ org 0
 VGA_MODE	equ	0x0013 ; Set VGA_VIDEO_MODE to 320x200, 256 colors
 VIDEO_MEMORY	equ	0xA000 ; Segment video memory address
 END_VIDEO_MEM	equ	0xAFA0 ; Segment end of video memory address
+LFSR_BITMASK	equ	0x002D ; Bitmask defining the tapped bits for LFSR
 SCREEN_WIDTH	equ	320
 SCREEN_HEIGHT	equ	200
 ; RECT_WIDTH must be chosen to fit SCREEN_WIDTH/RECT_WIDTH into one byte
@@ -93,21 +94,22 @@ game_loop:
 	mov bx, NUM_WAIT_TICKS
 	call set_wait_time
 
-	call draw_toggle			; Debug
+	call draw_toggle		; Debug
 
-	call get_keystroke			; in: - out: al = keystroke
-	call update_direction			; in: al = keystroke, out: bx = direction
-	call compute_new_head_pos		; in: bx = direction, out: dx = new head pos
-	call get_color_from_pos			; in: dx = new head pos, out: bl = Color of pixel + in
-	call check_game_over
+	call get_keystroke		; in: - out: al = keystroke
+	call update_direction		; in: al = keystroke, out: bx = direction
+	call compute_new_head_pos	; in: bx = direction, out: dx = new head pos
+	call get_color_from_pos		; in: dx = new head pos, out: bl = Color of pixel + in
+	call check_game_over		; in: dx = new head pos + bl = Color of pixel, out: in
 
-	push bx				; Preserve color at new head pos
-	call shift_parts_back
-	pop bx				; Restore color at new head pos
+	push bx				
+	call shift_parts_back		; in: -, out: ax = tail position + si = pointer to [ds:SNAKE_LEN*2]
+	pop bx				
 	push dx				; Preserve new head position
 	push ax				; Preserve old tail position
 	call wait_time			; wait before draw so drawing is always done at same speed
 
+	; If snake eats apple, generate a new one and don't clear tail
 	cmp bl, APPLE_COLOR
 	jne .clear_old_tail
 	pop ax
@@ -121,7 +123,7 @@ game_loop:
 	.clear_old_tail:
 	pop dx
 	xor al, al
-	call draw_rect
+	call draw_rect			; dx = Position, al = Color
 
 	.draw_new_head:
 	pop dx
@@ -131,6 +133,7 @@ game_loop:
 
 	jmp game_loop
 
+; TODO: print game over message
 game_over:
 	hlt
 
@@ -239,7 +242,7 @@ update_direction:
 		mov [ds:DIR], bx
 		ret
 	.read_old_dir:
-		mov bx, [ds:DIR]
+		mov bx, [ds:DIR]	
 		ret
 
 ; Calling convention: Parameters: bx = Direction (bl = x_dir, bh = y_dir)
@@ -270,7 +273,7 @@ compute_new_head_pos:
 	.not_eq2:
 	ret
 
-; Calling Convention: Parameters: dx = Position (dl = x, dh = y)
+; Calling convention: Parameters: dx = Position (dl = x, dh = y)
 ;		      Return: bl = Color at the first index in video memory corresponding to the given position
 ;		      Destroys: ax, bl
 get_color_from_pos:
@@ -317,24 +320,19 @@ draw_toggle:
 
 ; Calling convention: Parameters: -
 ;		      Returns: -
-;		      Destroys: ax, bx, cx, dx, bp, si
+;		      Destroys: ax, bx, cx, dx, di
 draw_new_apple:
 	; bit = (lfsr ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) << 15
 	; lfsr = (lfsr >> 1) | bit
+	; Implement it with popcount of tapped bits
 	mov dx, [ds:LFSR]
 	.advance:
 		mov ax, dx
-		mov bx, dx
-		mov bp, dx
-		shr bx, 2
-		shr ax, 3
-		xor bx, ax
-		shr bp, 1
-		xor dx, bx
-		shr bx, 3
-		xor dx, bx
-		sal dx, 15
-		or dx, bp
+		and ax, LFSR_BITMASK
+		popcnt ax, ax
+		sal ax, 15
+		shr dx, 1
+		or dx, ax
 	mov [ds:LFSR], dx
 
 	; Restrict dh to 0..HEIGHT_END and dl to 0..WIDTH_END
