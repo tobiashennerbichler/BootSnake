@@ -7,8 +7,8 @@ END_VIDEO_MEM	equ	0xAFA0 ; Segment end of video memory address
 SCREEN_WIDTH	equ	320
 SCREEN_HEIGHT	equ	200
 ; RECT_WIDTH must be chosen to fit SCREEN_WIDTH/RECT_WIDTH into one byte
-RECT_WIDTH	equ	4
-RECT_HEIGHT	equ	4
+RECT_WIDTH	equ	8
+RECT_HEIGHT	equ	8
 WIDTH_END	equ	SCREEN_WIDTH / RECT_WIDTH
 HEIGHT_END	equ	SCREEN_HEIGHT / RECT_HEIGHT
 
@@ -17,12 +17,12 @@ HEIGHT_END	equ	SCREEN_HEIGHT / RECT_HEIGHT
 ; we take the next highest power of 2 of WIDTH_END or HEIGHT_END, respectively, and subtract WIDTH_END or
 ; HEIGHT_END off of the end result. This does not result in exactly x % WIDTH_END/HEIGHT_END, but is still
 ; in its bounds in less operations. The bitmasks must be set manually when changing Width/Height.
-WIDTH_BITMASK	equ	0x7F
-HEIGHT_BITMASK	equ	0x3F
+WIDTH_BITMASK	equ	0x3F;0x7F
+HEIGHT_BITMASK	equ	0x1F;0x3F
 
 BG_COLOR	equ	0
-SNAKE_COLOR	equ	0x30
-APPLE_COLOR	equ	0x40
+SNAKE_COLOR	equ	0x2F
+APPLE_COLOR	equ	0x28
 ; Offsets into DS:
 TIME		equ	0x0000 ; Stores time threshold for game ticks
 LFSR		equ	0x0002 ; Stores the current lfsr state for random apple generation
@@ -31,7 +31,7 @@ SNAKE_LEN	equ	0x0006 ; Length of snake position array
 SNAKE		equ	0x0008 ; Start of snake position array (Position: struct { u8 x, u8 y })
 ; Offsets into ES:
 TOGGLE		equ	0xF9FF
-TOGGLE_RECT	equ 	0x314F
+TOGGLE_RECT	equ 	0x1827
 NUM_WAIT_TICKS	equ	2
 
 ; == CODE ========================================================================
@@ -95,15 +95,26 @@ game_loop:
 	call get_keystroke			; in: - out: al = keystroke
 	call update_direction			; in: al = keystroke, out: bx = direction
 	call compute_new_head_pos		; in: bx = direction, out: dx = new head pos
+	call get_color_from_pos			; in: dx = new head pos, out: bl = Color of pixel + in
+	
+	; call check_game_over			; in: dx = new head pos + bl = Color of pixel, out: in
+	; Check if new position has snake color --> otherwise no collision
+	cmp bl, SNAKE_COLOR
+	jne .no_collision
+	; Even if snake color, no collision if new head is old tail
+	; TODO: could make exception for when len=2 (snake turns around and runs into old tail)
+	mov cx, [ds:SNAKE_LEN]
+	mov si, SNAKE
+	shl cx, 1
+	add si, cx
+	mov bp, -2[ds:si]
+	cmp dx, bp
+	je .no_collision
+	jmp game_over
 
-	;call get_color_from_pos			; in: dx = new head pos, out: si = Color of pixel
-	; TODO: compute index to ES for position
-	; TODO: check if new head pos is SNAKE_COLOR, if new head pos is not current tail (since tail will be moved) --> gameover
-	; TODO: check if new head pos is APPLE_COLOR, if so do not clear current tail, increment snake len, generate new apple
-
-	; dx = new head pos
-	; cx = len
-	; ax = head pos
+	; call shift_parts_back		; in: -, out: ax = tail position + si = pointer to [ds:SNAKE_LEN*2]
+	.no_collision:
+	push bx				; Preserve color at new head pos
 	mov cx, [ds:SNAKE_LEN]
 	mov si, SNAKE
 	lodsw
@@ -113,25 +124,38 @@ game_loop:
 		mov bx, ax
 		lodsw
 		mov -2[ds:si], bx
+		jmp .loop
 	.loop_end:
+	pop bx				; Restore color at new head pos
 	push dx				; Preserve new head position
 	push ax				; Preserve old tail position
 	call wait_time			; wait before draw so drawing is always done at same speed
 
+	cmp bl, APPLE_COLOR
+	jne .clear_old_tail
+	pop ax
+	mov [ds:si], ax
+	mov cx, [ds:SNAKE_LEN]
+	inc cx
+	mov [ds:SNAKE_LEN], cx
 	call draw_new_apple
+	jmp .draw_new_head
 
-	; clear old tail
+	.clear_old_tail:
 	pop dx
 	xor al, al
 	call draw_rect
 
-	; draw new head
+	.draw_new_head:
 	pop dx
 	mov al, SNAKE_COLOR
 	call draw_rect			; dx = Position, al = Color
 	mov [ds:SNAKE], dx		; store new pos of head
 
 	jmp game_loop
+
+game_over:
+	hlt
 
 ; Calling convention: Parameters: dx = Position (dl=x, dh=y)
 ;		      		  al = Color
@@ -232,15 +256,15 @@ compute_new_head_pos:
 	ret
 
 ; Calling Convention: Parameters: dx = Position (dl = x, dh = y)
-;		      Return: si = Color at the index in video memory computed from the given position
-;		      Destroys: ax, si
+;		      Return: bl = Color at the first index in video memory corresponding to the given position
+;		      Destroys: ax, bl
 get_color_from_pos:
 	movzx ax, dl
-	movzx si, dh
+	movzx bx, dh
 	imul ax, RECT_WIDTH
-	imul si, RECT_HEIGHT*SCREEN_WIDTH
-	add si, ax
-	mov si, [es:si]
+	imul bx, RECT_HEIGHT*SCREEN_WIDTH
+	add bx, ax
+	mov bl, [es:bx]
 	ret
 
 ; Calling convention: Parameters: bx = Ticks to wait
@@ -271,7 +295,7 @@ wait_time:
 ;		      Destroys: al, dx, di, bx, cx
 draw_toggle:
 	mov al, [es:TOGGLE]
-	xor al, 1
+	xor al, 0xE
 	mov dx, TOGGLE_RECT
 	call draw_rect
 	ret
@@ -312,7 +336,7 @@ draw_new_apple:
 	.width_ok:
 
 	call get_color_from_pos
-	cmp si, SNAKE_COLOR
+	cmp bl, SNAKE_COLOR
 	je draw_new_apple
 
 	mov al, APPLE_COLOR
