@@ -3,7 +3,7 @@ org 0
 ; == CONSTANTS ===================================================================
 VGA_MODE	equ	0x0013 ; Set VGA_VIDEO_MODE to 320x200, 256 colors
 VIDEO_MEMORY	equ	0xA000 ; Segment video memory address
-END_VIDEO_MEM	equ	0xAFA0 ; Segment end of video memory address
+DATA_MEMORY	equ	0x7E00 ; Segment data memory address
 LFSR_BITMASK	equ	0x002D ; Bitmask defining the tapped bits for LFSR
 SCREEN_WIDTH	equ	320
 SCREEN_HEIGHT	equ	200
@@ -60,8 +60,8 @@ init:
 	push VIDEO_MEMORY
 	pop es
 
-	; Setup DS to end of video memory
-	push END_VIDEO_MEM
+	; Setup DS with data memory address
+	push DATA_MEMORY
 	pop ds
 
 	; Initial len of snake array
@@ -94,7 +94,7 @@ game_loop:
 	mov bx, NUM_WAIT_TICKS
 	call set_wait_time
 
-	call draw_toggle		; Debug
+	;call draw_toggle		; Debug
 
 	call get_keystroke		; in: - out: al = keystroke
 	call update_direction		; in: al = keystroke, out: bx = direction
@@ -133,9 +133,30 @@ game_loop:
 
 	jmp game_loop
 
-; TODO: print game over message
 game_over:
-	hlt
+	; Draw freeze screen
+	mov ax, VIDEO_MEMORY
+	mov ds, ax
+	mov es, ax
+	xor si, si
+	xor di, di
+	.draw_xor_loop:
+		lodsb
+		xor al, 0x1D
+		stosb
+		cmp si, SCREEN_HEIGHT*SCREEN_WIDTH
+		jne .draw_xor_loop
+
+	; Reset game on keystroke
+	.wait_for_keystroke:
+		mov ah, 1
+		int 0x16
+		jz .wait_for_keystroke
+	; Take keystroke out of buffer
+	xor ah, ah
+	int 0x16
+	jmp init
+
 
 ; Calling convention: Parameters: dx = new head Position, bl = Color of new head Position
 ;		      Return: -
@@ -311,12 +332,12 @@ wait_time:
 ; Calling convention: Parameters: -
 ;		      Returns: -
 ;		      Destroys: al, dx, di, bx, cx
-draw_toggle:
-	mov al, [es:TOGGLE]
-	xor al, 0xE
-	mov dx, TOGGLE_RECT
-	call draw_rect
-	ret
+;draw_toggle:
+;	mov al, [es:TOGGLE]
+;	xor al, 0xE
+;	mov dx, TOGGLE_RECT
+;	call draw_rect
+;	ret
 
 ; Calling convention: Parameters: -
 ;		      Returns: -
@@ -354,6 +375,8 @@ draw_new_apple:
 	mov al, APPLE_COLOR
 	call draw_rect
 	ret
+
+game_over_string db "Game Over!", 0
 
 times 510-($-$$) db 0
 dw 0xAA55
