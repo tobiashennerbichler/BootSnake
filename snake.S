@@ -179,8 +179,6 @@ check_game_over:
 	cmp bl, SNAKE_COLOR
 	jne .no_collision
 	; Even if snake color, no collision if new head is old tail
-	; TODO: could make exception for when len=2 (snake turns around and runs into old tail)
-	; TODO: or simply disable snake from being able to turn around
 	mov cx, [ds:SNAKE_LEN]
 	mov si, SNAKE
 	shl cx, 1
@@ -250,9 +248,10 @@ get_keystroke:
 
 ; Calling convention: Parameters: al = ASCII keystroke
 ;		      Return: bx = direction
-;		      Destroys: bx
+;		      Destroys: bx, cx
 update_direction:
-	xor bx, bx			; bh = y_dir, bl = x_dir
+	mov bx, [ds:DIR]		; bh = y_dir, bl = x_dir
+	xor cx, cx
 	cmp al, 'w'
 	je .w
 	cmp al, 's'
@@ -261,23 +260,30 @@ update_direction:
 	je .a
 	cmp al, 'd'
 	je .d
-	jmp .read_old_dir		; not one of 'wasd'
+	jmp .ret_old_dir		; not one of 'wasd'
 	.w:
-		mov bh, -1
+		mov ch, -1
 		jmp .update_dir
 	.s:
-		mov bh, 1
+		mov ch, 1
 		jmp .update_dir
 	.a:
-		mov bl, -1
+		mov cl, -1
 		jmp .update_dir
 	.d:
-		mov bl, 1
+		mov cl, 1
 	.update_dir:
+		; Disallow 180° move (old_dir + new_dir == 0)
+		push cx
+		add cl, bl
+		add ch, bh
+		or ch, cl
+		pop cx
+		jz .ret_old_dir
+		mov bx, cx
 		mov [ds:DIR], bx
 		ret
-	.read_old_dir:
-		mov bx, [ds:DIR]	
+	.ret_old_dir:
 		ret
 
 ; Calling convention: Parameters: bx = Direction (bl = x_dir, bh = y_dir)
