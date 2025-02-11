@@ -2,6 +2,7 @@ org 0
 
 ; == CONSTANTS ===================================================================
 VGA_MODE	equ	0x0013 ; Set VGA_VIDEO_MODE to 320x200, 256 colors
+CODE_START	equ	0x07C0 ; Segment code address
 VIDEO_MEMORY	equ	0xA000 ; Segment video memory address
 DATA_MEMORY	equ	0x7E00 ; Segment data memory address
 LFSR_BITMASK	equ	0x002D ; Bitmask defining the tapped bits for LFSR
@@ -18,11 +19,13 @@ HEIGHT_END	equ	SCREEN_HEIGHT / RECT_HEIGHT
 ; we take the next highest power of 2 of WIDTH_END or HEIGHT_END, respectively, and subtract WIDTH_END or
 ; HEIGHT_END off of the end result. This does not result in exactly x % WIDTH_END/HEIGHT_END, but is still
 ; in its bounds in less operations. The bitmasks must be set manually when changing Width/Height.
-WIDTH_BITMASK	equ	0x3F;0x7F
-HEIGHT_BITMASK	equ	0x1F;0x3F
+WIDTH_BITMASK	equ	0x3F
+HEIGHT_BITMASK	equ	0x1F
 
 ; Colors
 BG_COLOR	equ	0
+FREEZE_COLOR	equ	0x1D
+GAME_OVER_COLOR	equ	0x24
 SNAKE_COLOR	equ	0x2F
 APPLE_COLOR	equ	0x28
 
@@ -140,21 +143,32 @@ game_over:
 	mov es, ax
 	xor si, si
 	xor di, di
-	.draw_xor_loop:
+	.draw_freeze_screen:
 		lodsb
-		xor al, 0x1D
+		xor al, FREEZE_COLOR
 		stosb
 		cmp si, SCREEN_HEIGHT*SCREEN_WIDTH
-		jne .draw_xor_loop
+		jne .draw_freeze_screen
 
+	; Print Game Over String
+	push CODE_START
+	pop ds
+	mov si, game_over_string
+	xor bh, bh
+	mov bl, APPLE_COLOR
+	mov ah, 0x0E
+	.print_loop:
+		lodsb
+		test al, al
+		jz .get_valid_keystroke
+		int 0x10
+		jmp .print_loop
+	
 	; Reset game on keystroke
-	.wait_for_keystroke:
-		mov ah, 1
-		int 0x16
-		jz .wait_for_keystroke
-	; Take keystroke out of buffer
-	xor ah, ah
-	int 0x16
+	.get_valid_keystroke:
+		call get_keystroke
+		test al, al
+		jz .get_valid_keystroke
 	jmp init
 
 
