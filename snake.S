@@ -4,7 +4,7 @@ org 0
 VGA_MODE	equ	0x0013 ; Set VGA_VIDEO_MODE to 320x200, 256 colors
 CODE_START	equ	0x07C0 ; Segment code address
 VIDEO_MEMORY	equ	0xA000 ; Segment video memory address
-DATA_MEMORY	equ	0x7E00 ; Segment data memory address
+DATA_MEMORY	equ	0x07E0 ; Segment data memory address
 LFSR_BITMASK	equ	0x002D ; Bitmask defining the tapped bits for LFSR
 SCREEN_WIDTH	equ	320
 SCREEN_HEIGHT	equ	200
@@ -46,13 +46,12 @@ jmp init
 nop
 
 init:
-	; Init Stack Segment, Stack Pointer and Data Segment
+	; Init Stack Segment and Stack Pointer
 	cli
-	xor ax, ax
+	mov ax, CODE_START
 	mov ss, ax
-	mov ax, 0x7C00
+	xor ax, ax
 	mov sp, ax
-	mov ds, ax
 	sti
 
 	; Set Video mode
