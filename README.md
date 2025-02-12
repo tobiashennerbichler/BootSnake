@@ -12,7 +12,7 @@ When the snake eats an apple, the position of the next apple is generated from t
 ## Requirements
 
 - nasm: to generate the machine code
-- qemu-system-[x86_64/i386]: to boot the code with qemu
+- qemu-system-[x86_64/i386]: to boot the code with qemu (requires support for the Intel SSE4.2 Extension to support the POPCNT instruction)
 
 ## Running
 

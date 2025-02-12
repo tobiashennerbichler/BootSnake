@@ -4,7 +4,7 @@ all:
 	nasm -f bin snake.S -o snake.bin
 
 run:
-	qemu-system-i386 -drive file=snake.bin,format=raw
+	qemu-system-x86_64 -cpu Westmere,+sse4.2 -drive file=snake.bin,format=raw
 
 floppy:
 	head -c 1474560 /dev/zero > boot.vfd
