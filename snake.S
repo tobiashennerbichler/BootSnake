@@ -25,9 +25,9 @@ HEIGHT_BITMASK	equ	0x1F
 ; Colors
 BG_COLOR	equ	0
 FREEZE_COLOR	equ	0x1D
-GAME_OVER_COLOR	equ	0x24
 SNAKE_COLOR	equ	0x2F
 APPLE_COLOR	equ	0x28
+GAME_OVER_COLOR	equ	0x35
 
 ; Offsets into DS:
 TIME		equ	0x0000 ; Stores time threshold for game ticks
@@ -137,32 +137,33 @@ game_loop:
 	jmp game_loop
 
 game_over:
-	; Draw freeze screen
-	mov ax, VIDEO_MEMORY
-	mov ds, ax
-	mov es, ax
-	xor si, si
-	xor di, di
-	.draw_freeze_screen:
-		lodsb
-		xor al, FREEZE_COLOR
-		stosb
-		cmp si, SCREEN_HEIGHT*SCREEN_WIDTH
-		jne .draw_freeze_screen
-
 	; Print Game Over String
 	push CODE_START
 	pop ds
 	mov si, game_over_string
 	xor bh, bh
-	mov bl, APPLE_COLOR
+	mov bl, GAME_OVER_COLOR
 	mov ah, 0x0E
 	.print_loop:
 		lodsb
 		test al, al
-		jz .get_valid_keystroke
+		jz .draw_freeze
 		int 0x10
 		jmp .print_loop
+
+	; Draw freeze screen
+	.draw_freeze:
+	mov ax, VIDEO_MEMORY
+	mov ds, ax
+	mov es, ax
+	xor si, si
+	xor di, di
+	.draw_loop:
+		lodsb
+		xor al, FREEZE_COLOR
+		stosb
+		cmp si, SCREEN_HEIGHT*SCREEN_WIDTH
+		jne .draw_loop
 	
 	; Reset game on keystroke
 	.get_valid_keystroke:
