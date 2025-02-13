@@ -50,8 +50,7 @@ init:
 	cli
 	mov ax, CODE_START
 	mov ss, ax
-	xor ax, ax
-	mov sp, ax
+	xor sp, sp
 	sti
 
 	; Set Video mode
