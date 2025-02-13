@@ -289,28 +289,21 @@ update_direction:
 ;		      Return: dx = New Head Position
 ;		      Destroys: dx
 compute_new_head_pos:
-	; Compute new x pos + wrap around if necessary
+	; Compute new x pos + check collision with wall
 	; Code duplication less space than generic method call i tested
 	mov dx, [ds:SNAKE]
 
 	add dl, bl
-	jns .not_neg
-	add dl, WIDTH_END
-	.not_neg:
+	js game_over
 	cmp dl, WIDTH_END
-	jne .not_eq
-	xor dl, dl
+	je game_over
 
-	.not_eq:
-	; Compute new y pos + wrap around if necessary
+	; Compute new y pos + check collision with wall
 	add dh, bh
-	jns .not_neg2
-	add dh, HEIGHT_END
-	.not_neg2:
+	js game_over
 	cmp dh, HEIGHT_END
-	jne .not_eq2
-	xor dh, dh
-	.not_eq2:
+	je game_over
+
 	ret
 
 ; Calling convention: Parameters: dx = Position (dl = x, dh = y)
