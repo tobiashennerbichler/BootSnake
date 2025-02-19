@@ -4,7 +4,7 @@
 
 This project implements a Bootsector Snake Game, meaning it is written in x86 Real Mode Assembly and uses less than 512B of code. It works similarly to other snake games:
 - The snake is controlled using 'WASD'
-- Each time there is one singular apply, which, if consumed, increases the snakes length by one
+- There exists only one apple at a time. If it is consumed the snake increases its length by one
 - If the snake runs into the wall or into itself, the game ends
 - During the gameover screen any keypress resets the game
 
@@ -16,7 +16,7 @@ When the snake eats an apple, the position of the next apple is generated from t
 ## Requirements
 
 - nasm: to generate the machine code
-- qemu-system-[x86_64/i386]: to boot the code with qemu (requires support for the Intel SSE4.2 Extension to support the POPCNT instruction)
+- qemu-system-[x86_64/i386]: to boot the code with qemu (the emulated cpu requires support for the Intel SSE4.2 Extension to support the POPCNT instruction)
 
 ## Running
 
